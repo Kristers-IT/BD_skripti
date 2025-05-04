@@ -1,0 +1,51 @@
+
+$intervalSeconds = 1
+$durationMinutes = 2
+$endTime = (Get-Date).AddMinutes($durationMinutes)
+
+$processNames = @("wazuh-agent", "velociraptor")
+$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$logFile = "C:\Logs\agent_resource_usage_$timestamp.csv"
+New-Item -ItemType File -Path $logFile -Force | Out-Null
+Add-Content $logFile "Timestamp,Agent,CPU(%),RAM(MB),RX(KB/s),TX(KB/s)"
+
+# Loģisko kodolu skaits
+$logicalProcessorCount = (Get-WmiObject Win32_ComputerSystem).NumberOfLogicalProcessors
+
+# Iepriekšējie CPU laiki
+$previousCpuTimes = @{}
+
+while ((Get-Date) -lt $endTime) {
+    foreach ($proc in $processNames) {
+        $p = Get-Process -Name $proc -ErrorAction SilentlyContinue
+        if ($p) {
+            $now = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+            $currentCpuTime = $p.CPU
+            $ram = [math]::Round($p.WorkingSet64 / 1MB, 2)
+
+            $cpuUsage = 0
+            if ($previousCpuTimes.ContainsKey($proc)) {
+                $deltaCpu = $currentCpuTime - $previousCpuTimes[$proc]
+                $cpuUsageRaw = ($deltaCpu / $intervalSeconds) * 100
+                $cpuUsage = [math]::Round($cpuUsageRaw / $logicalProcessorCount, 2)
+            }
+            $previousCpuTimes[$proc] = $currentCpuTime
+
+            # Tīkla trafiks
+            $counters = Get-Counter -Counter "\Process($proc)\IO Read Bytes/sec","\Process($proc)\IO Write Bytes/sec" -ErrorAction SilentlyContinue
+            if ($counters.CounterSamples.Count -eq 2) {
+                $rx = [math]::Round($counters.CounterSamples[0].CookedValue / 1024, 2)
+                $tx = [math]::Round($counters.CounterSamples[1].CookedValue / 1024, 2)
+            } else {
+                $rx = 0
+                $tx = 0
+            }
+
+            Add-Content $logFile "$now,$proc,$cpuUsage,$ram,$rx,$tx"
+            Write-Host "$now | $proc | CPU: $cpuUsage% | RAM: $ram MB | RX: $rx KB/s | TX: $tx KB/s"
+        } else {
+            Write-Host "⚠️ $proc nav aktīvs"
+        }
+    }
+    Start-Sleep -Seconds $intervalSeconds
+}
