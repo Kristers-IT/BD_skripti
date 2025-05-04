@@ -1,0 +1,95 @@
+
+intervalSeconds=1
+durationMinutes=2
+endTime=$((durationMinutes * 60))
+
+trackedProcesses=("wazuh-agentd" "velociraptor")
+
+# === LOG FAILS ===
+timestamp=$(date +"%Y%m%d_%H%M%S")
+logFile="$HOME/agent_resource_usage_$timestamp.csv"
+echo "Timestamp,Process,CPU(%),RAM(MB),RX(KB/s),TX(KB/s)" > "$logFile"
+
+# === PALĪGMAINĪGIE ===
+declare -A prevRxBytes
+declare -A prevTxBytes
+declare -A prevProcCpu
+declare -A prevTotalCpu
+
+logicalProcessorCount=$(nproc)
+
+# === CPU INFO SAGATAVOŠANA ===
+get_total_cpu_time() {
+  awk '/^cpu / { for(i=2;i<=NF;i++) sum += $i; print sum }' /proc/stat
+}
+
+get_process_cpu_time() {
+  local pid=$1
+  if [ -r "/proc/$pid/stat" ]; then
+    awk '{print $14 + $15}' /proc/"$pid"/stat
+  else
+    echo 0
+  fi
+}
+
+# === GALVENAIS CIKLS ===
+while [ $SECONDS -lt $endTime ]; do
+  for procName in "${trackedProcesses[@]}"; do
+    pids=$(pgrep -f "$procName")
+
+    if [ -n "$pids" ]; then
+      totalRss=0
+      totalRx=0
+      totalTx=0
+      totalCpu=0
+
+      for pid in $pids; do
+        # === RAM ===
+        read _ rss <<< $(ps -p $pid -o %cpu,rss --no-headers)
+        rss=${rss:-0}
+        totalRss=$((totalRss + rss))
+
+        # === CPU ===
+        procCpu=$(get_process_cpu_time "$pid")
+        totalCpuTime=$(get_total_cpu_time)
+        prevProc=${prevProcCpu[$pid]:-0}
+        prevTotal=${prevTotalCpu[$pid]:-0}
+        cpuDiff=$((procCpu - prevProc))
+        totalDiff=$((totalCpuTime - prevTotal))
+        cpuUsage=0
+        if [ "$totalDiff" -gt 0 ]; then
+          cpuUsage=$(echo "scale=2; 100 * $cpuDiff / $totalDiff" | bc)
+        fi
+        totalCpu=$(echo "$totalCpu + $cpuUsage" | bc)
+        prevProcCpu[$pid]=$procCpu
+        prevTotalCpu[$pid]=$totalCpuTime
+
+        # === TĪKLS (RX / TX) ===
+        netDev="/proc/$pid/net/dev"
+        if [ -f "$netDev" ]; then
+          read rx tx <<< $(awk 'NR>2 {gsub(":", ""); rx+=$2; tx+=$10} END {print rx, tx}' "$netDev")
+          prevRx=${prevRxBytes[$pid]:-0}
+          prevTx=${prevTxBytes[$pid]:-0}
+          rxRate=$(echo "scale=2; ($rx - $prevRx) / 1024 / $intervalSeconds" | bc)
+          txRate=$(echo "scale=2; ($tx - $prevTx) / 1024 / $intervalSeconds" | bc)
+          prevRxBytes[$pid]=$rx
+          prevTxBytes[$pid]=$tx
+          totalRx=$(echo "$totalRx + $rxRate" | bc)
+          totalTx=$(echo "$totalTx + $txRate" | bc)
+        fi
+      done
+
+      ramMb=$(echo "scale=2; $totalRss / 1024" | bc)
+      now=$(date +"%Y-%m-%d %H:%M:%S")
+
+      echo "$now,$procName,$totalCpu,$ramMb,$totalRx,$totalTx" >> "$logFile"
+      echo "$now | $procName | CPU: $totalCpu% | RAM: $ramMb MB | RX: $totalRx KB/s | TX: $totalTx KB/s"
+    else
+      echo "⚠️ $procName nav aktīvs"
+    fi
+  done
+  sleep $intervalSeconds
+done
+
+echo ""
+echo "✅ Dati saglabāti failā: $logFile"
