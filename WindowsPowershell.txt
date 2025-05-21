@@ -9,10 +9,8 @@ $logFile = "C:\Logs\agent_resource_usage_$timestamp.csv"
 New-Item -ItemType File -Path $logFile -Force | Out-Null
 Add-Content $logFile "Timestamp,Agent,CPU(%),RAM(MB),RX(KB/s),TX(KB/s)"
 
-# Loģisko kodolu skaits
 $logicalProcessorCount = (Get-WmiObject Win32_ComputerSystem).NumberOfLogicalProcessors
 
-# Iepriekšējie CPU laiki
 $previousCpuTimes = @{}
 
 while ((Get-Date) -lt $endTime) {
@@ -31,7 +29,6 @@ while ((Get-Date) -lt $endTime) {
             }
             $previousCpuTimes[$proc] = $currentCpuTime
 
-            # Tīkla trafiks
             $counters = Get-Counter -Counter "\Process($proc)\IO Read Bytes/sec","\Process($proc)\IO Write Bytes/sec" -ErrorAction SilentlyContinue
             if ($counters.CounterSamples.Count -eq 2) {
                 $rx = [math]::Round($counters.CounterSamples[0].CookedValue / 1024, 2)
