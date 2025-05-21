@@ -5,12 +5,10 @@ endTime=$((durationMinutes * 60))
 
 trackedProcesses=("wazuh-agentd" "velociraptor")
 
-# === LOG FAILS ===
 timestamp=$(date +"%Y%m%d_%H%M%S")
 logFile="$HOME/agent_resource_usage_$timestamp.csv"
 echo "Timestamp,Process,CPU(%),RAM(MB),RX(KB/s),TX(KB/s)" > "$logFile"
 
-# === PALĪGMAINĪGIE ===
 declare -A prevRxBytes
 declare -A prevTxBytes
 declare -A prevProcCpu
@@ -18,7 +16,6 @@ declare -A prevTotalCpu
 
 logicalProcessorCount=$(nproc)
 
-# === CPU INFO SAGATAVOŠANA ===
 get_total_cpu_time() {
   awk '/^cpu / { for(i=2;i<=NF;i++) sum += $i; print sum }' /proc/stat
 }
@@ -32,7 +29,6 @@ get_process_cpu_time() {
   fi
 }
 
-# === GALVENAIS CIKLS ===
 while [ $SECONDS -lt $endTime ]; do
   for procName in "${trackedProcesses[@]}"; do
     pids=$(pgrep -f "$procName")
@@ -49,7 +45,6 @@ while [ $SECONDS -lt $endTime ]; do
         rss=${rss:-0}
         totalRss=$((totalRss + rss))
 
-        # === CPU ===
         procCpu=$(get_process_cpu_time "$pid")
         totalCpuTime=$(get_total_cpu_time)
         prevProc=${prevProcCpu[$pid]:-0}
@@ -64,7 +59,6 @@ while [ $SECONDS -lt $endTime ]; do
         prevProcCpu[$pid]=$procCpu
         prevTotalCpu[$pid]=$totalCpuTime
 
-        # === TĪKLS (RX / TX) ===
         netDev="/proc/$pid/net/dev"
         if [ -f "$netDev" ]; then
           read rx tx <<< $(awk 'NR>2 {gsub(":", ""); rx+=$2; tx+=$10} END {print rx, tx}' "$netDev")
